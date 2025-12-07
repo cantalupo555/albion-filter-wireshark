@@ -62,30 +62,36 @@ if [[ "$CHOICE" == "2" || "$CHOICE" == "3" ]]; then
     echo "Splitting full detailed dump into chunks of $CHUNK_SIZE packets..."
     rm -f "$OUT_DIR/${BASE_NAME}_chunk_"*.txt
 
-    tshark -r "$PCAP_FILE" -V 2>/dev/null | \
-    awk -v max="$CHUNK_SIZE" -v dir="$OUT_DIR" -v base="$BASE_NAME" '
-        /^Frame [0-9]+:/ {
-            if (NR > 1) { print prev >> outfile; close(outfile) }
-            if (++count > max) {
-                count = 1
-                part++
-                outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, part)
-                printf "   → %s_chunk_%03d.txt (packets %d - %d)\n", base, part, (part-1)*max+1, part*max
-            } else if (count == 1) {
-                part++
-                outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, part)
-                printf "   → %s_chunk_%03d.txt (packets %d - ", base, part, (part-1)*max+1
-            }
-        }
-        { prev = $0 }
-        END {
-            if (NR > 0) {
-                print prev >> outfile
-                close(outfile)
-                printf "%d)\n", (part-1)*max + count - 1
-            }
-            printf "Done! %d chunk(s) created.\n", part
-        }'
+    tshark -r "$PCAP_FILE" -Y "$IP_FILTER" -V 2>/dev/null | \
+    awk -v max="$CHUNK_SIZE" -v dir="$OUT_DIR" -v base="$BASE_NAME" "
+BEGIN { pkt_count = 0; part = 0; buffer = \"\" }
+ /^Frame [0-9]+:/ {
+    if (buffer != \"\") {
+        print buffer >> outfile
+        close(outfile)
+    }
+    pkt_count++
+    if (pkt_count > max) {
+        pkt_count = 1
+        part++
+    }
+    if (pkt_count == 1) {
+        part++
+        outfile = sprintf(\"%s/%s_chunk_%03d.txt\", dir, base, part)
+        printf \"   → %s_chunk_%03d.txt (packets %d - \", base, part, (part-1)*max+1
+    }
+    buffer = \$0 \"\\n\"
+    next
+ }
+ { buffer = buffer \$0 \"\\n\" }
+END {
+    if (buffer != \"\") {
+        print buffer >> outfile
+        close(outfile)
+        printf \"%d)\\n\", (part-1)*max + pkt_count
+    }
+    printf \"Done! %d chunk(s) created.\\n\", part
+ }"
 fi
 
 echo
