@@ -1,6 +1,6 @@
 #!/bin/bash
 # =========================================================
-# Albion Online PCAP Extractor v4
+# Albion Online PCAP Extractor
 # Splits tshark verbose output into manageable chunks
 # =========================================================
 
@@ -57,15 +57,15 @@ split_txt_file() {
     
     echo
     echo "Splitting into chunks of $CHUNK_SIZE packets..."
-    rm -f "$OUT_DIR/${BASE_NAME}_chunk_"*.txt
+    rm -f "$OUT_DIR/${BASE_NAME}_full_packet_data_"*.txt
     
     # Use csplit-like approach with awk - more reliable
     awk -v max="$CHUNK_SIZE" -v dir="$OUT_DIR" -v base="$BASE_NAME" '
     BEGIN {
         pkt = 0
         chunk = 1
-        outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
-        printf "   → %s_chunk_%03d.txt ", base, chunk
+        outfile = sprintf("%s/%s_full_packet_data_%03d.txt", dir, base, chunk)
+        printf "   → %s_full_packet_data_%03d.txt ", base, chunk
     }
     
     /^Frame [0-9]+:/ {
@@ -77,8 +77,8 @@ split_txt_file() {
             printf "(500 packets)\n"
             pkt = 1
             chunk++
-            outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
-            printf "   → %s_chunk_%03d.txt ", base, chunk
+            outfile = sprintf("%s/%s_full_packet_data_%03d.txt", dir, base, chunk)
+            printf "   → %s_full_packet_data_%03d.txt ", base, chunk
         }
     }
     
@@ -97,7 +97,7 @@ split_txt_file() {
     echo "════════════════════════════════════════════════════════════"
     echo "FILES CREATED:"
     echo "════════════════════════════════════════════════════════════"
-    ls -lh "$OUT_DIR/${BASE_NAME}_chunk_"*.txt 2>/dev/null
+    ls -lh "$OUT_DIR/${BASE_NAME}_full_packet_data_"*.txt 2>/dev/null
     echo
     echo "Total size:"
     du -sh "$OUT_DIR" 2>/dev/null
@@ -153,16 +153,16 @@ process_pcapng() {
     echo
     echo "Generating packet index..."
     if [ "$USE_FILTER" = "yes" ]; then
-        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_packet_list_index.txt" 2>/dev/null
     else
-        tshark -r "$PCAP_FILE" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+        tshark -r "$PCAP_FILE" > "$OUT_DIR/${BASE_NAME}_packet_list_index.txt" 2>/dev/null
     fi
-    echo "→ ${BASE_NAME}_index.txt created"
+    echo "→ ${BASE_NAME}_packet_list_index.txt created"
     
     # Split into chunks
     echo
     echo "Splitting into chunks of $CHUNK_SIZE packets..."
-    rm -f "$OUT_DIR/${BASE_NAME}_chunk_"*.txt
+    rm -f "$OUT_DIR/${BASE_NAME}_full_packet_data_"*.txt
     
     if [ "$USE_FILTER" = "yes" ]; then
         tshark -r "$PCAP_FILE" -Y "$IP_FILTER" -V 2>/dev/null
@@ -172,8 +172,8 @@ process_pcapng() {
     BEGIN {
         pkt = 0
         chunk = 1
-        outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
-        printf "   → %s_chunk_%03d.txt ", base, chunk
+        outfile = sprintf("%s/%s_full_packet_data_%03d.txt", dir, base, chunk)
+        printf "   → %s_full_packet_data_%03d.txt ", base, chunk
     }
     
     /^Frame [0-9]+:/ {
@@ -184,8 +184,8 @@ process_pcapng() {
             printf "(500 packets)\n"
             pkt = 1
             chunk++
-            outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
-            printf "   → %s_chunk_%03d.txt ", base, chunk
+            outfile = sprintf("%s/%s_full_packet_data_%03d.txt", dir, base, chunk)
+            printf "   → %s_full_packet_data_%03d.txt ", base, chunk
         }
     }
     
@@ -205,7 +205,7 @@ process_pcapng() {
     echo "FILES CREATED:"
     echo "════════════════════════════════════════════════════════════"
     ls -lh "$OUT_DIR/${BASE_NAME}"*.txt 2>/dev/null | head -15
-    CHUNK_COUNT=$(ls "$OUT_DIR/${BASE_NAME}_chunk_"*.txt 2>/dev/null | wc -l)
+    CHUNK_COUNT=$(ls "$OUT_DIR/${BASE_NAME}_full_packet_data_"*.txt 2>/dev/null | wc -l)
     [ "$CHUNK_COUNT" -gt 15 ] && echo "... and $((CHUNK_COUNT - 15)) more chunk files"
     echo
     du -sh "$OUT_DIR" 2>/dev/null
@@ -252,26 +252,26 @@ generate_index_only() {
     echo "Generating packet index..."
     
     if [ -n "$IP_FILTER" ]; then
-        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_packet_list_index.txt" 2>/dev/null
     else
-        tshark -r "$PCAP_FILE" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+        tshark -r "$PCAP_FILE" > "$OUT_DIR/${BASE_NAME}_packet_list_index.txt" 2>/dev/null
     fi
     
-    TOTAL_LINES=$(wc -l < "$OUT_DIR/${BASE_NAME}_index.txt")
-    FILE_SIZE=$(du -h "$OUT_DIR/${BASE_NAME}_index.txt" | cut -f1)
+    TOTAL_LINES=$(wc -l < "$OUT_DIR/${BASE_NAME}_packet_list_index.txt")
+    FILE_SIZE=$(du -h "$OUT_DIR/${BASE_NAME}_packet_list_index.txt" | cut -f1)
     
     echo
     echo "════════════════════════════════════════════════════════════"
     echo "INDEX CREATED:"
     echo "════════════════════════════════════════════════════════════"
-    echo "File: ${BASE_NAME}_index.txt"
+    echo "File: ${BASE_NAME}_packet_list_index.txt"
     echo "Size: $FILE_SIZE"
     echo "Packets: $TOTAL_LINES"
     echo "Location: $OUT_DIR"
     echo
     echo "Preview (first 10 lines):"
     echo "────────────────────────────────────────────────────────────"
-    head -10 "$OUT_DIR/${BASE_NAME}_index.txt"
+    head -10 "$OUT_DIR/${BASE_NAME}_packet_list_index.txt"
     echo "────────────────────────────────────────────────────────────"
 }
 
