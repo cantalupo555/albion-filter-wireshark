@@ -287,10 +287,13 @@ main_menu() {
         echo "      (Use if you already have a tshark -V output file)"
         echo
         echo "   2) Process .pcapng WITH IP filter (Albion servers only)"
+        echo "      → Generates: index + chunks"
         echo
         echo "   3) Process .pcapng WITHOUT filter (all packets)"
+        echo "      → Generates: index + chunks"
         echo
         echo "   4) Generate packet index only (summary, one line per packet)"
+        echo "      → Generates: index only"
         echo
         echo "   5) Exit"
         echo
