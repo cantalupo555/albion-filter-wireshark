@@ -1,103 +1,246 @@
 #!/bin/bash
 # =========================================================
-# Albion Online PCAP Extractor
-# 1) Generate clean game traffic index only
-# 2) Split full detailed dump into chunks only
-# 3) Do both (recommended & default)
+# Albion Online PCAP Extractor v3
+# Splits tshark verbose output into manageable chunks
 # =========================================================
 
 CHUNK_SIZE=500
-IP_FILTER="ip.addr == 5.188.125.56 or ip.addr == 5.188.125.14 or ip.addr == 5.188.125.47"
 
-PCAP_FILE="${1:-/tmp/albion.pcapng}"
-
-# Ask for file if not exists
-if [ ! -f "$PCAP_FILE" ]; then
-    echo -n "Enter full path to the .pcapng file (or press ENTER for /tmp/albion.pcapng): "
-    read -r ANSWER
-    PCAP_FILE="${ANSWER:-/tmp/albion.pcapng}"
-fi
-
-if [ ! -f "$PCAP_FILE" ]; then
-    echo "Error: File not found → $PCAP_FILE"
-    exit 1
-fi
-
+# Get script directory (where output will be saved)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 OUT_DIR="$SCRIPT_DIR/output"
-mkdir -p "$OUT_DIR"
-BASE_NAME=$(basename "$PCAP_FILE" .pcapng)
 
-clear
-echo "════════════════════════════════════════════════════"
-echo "       ALBION ONLINE PCAP EXTRACTOR"
-echo "       File: $(basename "$PCAP_FILE")"
-echo "       Packets per chunk: $CHUNK_SIZE"
-echo "════════════════════════════════════════════════════"
-echo
-echo "What do you want to do?"
-echo "   1) Generate only the clean game traffic index"
-echo "   2) Split only the full detailed dump ($CHUNK_SIZE packets per file)"
-echo "   3) Do both – index + split (RECOMMENDED & default)"
-echo
-read -p "Choose 1, 2 or 3 (default = 3): " CHOICE
-CHOICE="${CHOICE:-3}"
-
-# =========================================================
-# Option 1 or 3 → Clean game traffic index
-# =========================================================
-if [[ "$CHOICE" == "1" || "$CHOICE" == "3" ]]; then
+show_header() {
+    clear
+    echo "════════════════════════════════════════════════════════════"
+    echo "       ALBION ONLINE PCAP EXTRACTOR v3"
+    echo "       Packets per chunk: $CHUNK_SIZE"
+    echo "       Output directory: $OUT_DIR"
+    echo "════════════════════════════════════════════════════════════"
     echo
-    echo "Generating clean game traffic index..."
-    tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_game_traffic_index.txt"
-    LINES=$(wc -l < "$OUT_DIR/${BASE_NAME}_game_traffic_index.txt")
-    echo "→ ${BASE_NAME}_game_traffic_index.txt created ($LINES lines)"
-fi
+}
 
 # =========================================================
-# Option 2 or 3 → Split full dump into chunks
+# Function: Split existing text file (FIXED)
 # =========================================================
-if [[ "$CHOICE" == "2" || "$CHOICE" == "3" ]]; then
+split_txt_file() {
+    show_header
+    echo "=== SPLIT EXISTING .TXT FILE ==="
     echo
-    echo "Splitting full detailed dump into chunks of $CHUNK_SIZE packets..."
+    echo -n "Enter full path to the .txt dump file: "
+    read -r TXT_FILE
+    
+    # Expand ~ to home directory
+    TXT_FILE="${TXT_FILE/#\~/$HOME}"
+    
+    if [ ! -f "$TXT_FILE" ]; then
+        echo "Error: File not found → $TXT_FILE"
+        return 1
+    fi
+    
+    TOTAL_PACKETS=$(grep -c "^Frame [0-9]*:" "$TXT_FILE")
+    FILE_SIZE=$(du -h "$TXT_FILE" | cut -f1)
+    EXPECTED_CHUNKS=$((TOTAL_PACKETS / CHUNK_SIZE + 1))
+    
+    echo
+    echo "File: $TXT_FILE"
+    echo "Size: $FILE_SIZE"
+    echo "Total packets found: $TOTAL_PACKETS"
+    echo "Expected chunks: $EXPECTED_CHUNKS files"
+    echo "Output directory: $OUT_DIR"
+    echo
+    read -p "Continue? [Y/n] " CONFIRM
+    [[ "$CONFIRM" =~ ^[Nn] ]] && return 0
+    
+    mkdir -p "$OUT_DIR"
+    BASE_NAME=$(basename "$TXT_FILE" .txt)
+    
+    echo
+    echo "Splitting into chunks of $CHUNK_SIZE packets..."
     rm -f "$OUT_DIR/${BASE_NAME}_chunk_"*.txt
-
-    tshark -r "$PCAP_FILE" -Y "$IP_FILTER" -V 2>/dev/null | \
-    awk -v max="$CHUNK_SIZE" -v dir="$OUT_DIR" -v base="$BASE_NAME" "
-BEGIN { pkt_count = 0; part = 0; buffer = \"\" }
- /^Frame [0-9]+:/ {
-    if (buffer != \"\") {
-        print buffer >> outfile
+    
+    # Use csplit-like approach with awk - more reliable
+    awk -v max="$CHUNK_SIZE" -v dir="$OUT_DIR" -v base="$BASE_NAME" '
+    BEGIN {
+        pkt = 0
+        chunk = 1
+        outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
+        printf "   → %s_chunk_%03d.txt ", base, chunk
+    }
+    
+    /^Frame [0-9]+:/ {
+        pkt++
+        
+        # Check if we need a new file
+        if (pkt > max) {
+            close(outfile)
+            printf "(500 packets)\n"
+            pkt = 1
+            chunk++
+            outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
+            printf "   → %s_chunk_%03d.txt ", base, chunk
+        }
+    }
+    
+    {
+        print $0 >> outfile
+    }
+    
+    END {
         close(outfile)
+        printf "(%d packets)\n", pkt
+        printf "\n✓ Done! %d chunk(s) created.\n", chunk
     }
-    pkt_count++
-    if (pkt_count > max) {
-        pkt_count = 1
-        part++
-    }
-    if (pkt_count == 1) {
-        part++
-        outfile = sprintf(\"%s/%s_chunk_%03d.txt\", dir, base, part)
-        printf \"   → %s_chunk_%03d.txt (packets %d - \", base, part, (part-1)*max+1
-    }
-    buffer = \$0 \"\\n\"
-    next
- }
- { buffer = buffer \$0 \"\\n\" }
-END {
-    if (buffer != \"\") {
-        print buffer >> outfile
-        close(outfile)
-        printf \"%d)\\n\", (part-1)*max + pkt_count
-    }
-    printf \"Done! %d chunk(s) created.\\n\", part
- }"
-fi
+    ' "$TXT_FILE"
+    
+    echo
+    echo "════════════════════════════════════════════════════════════"
+    echo "FILES CREATED:"
+    echo "════════════════════════════════════════════════════════════"
+    ls -lh "$OUT_DIR/${BASE_NAME}_chunk_"*.txt 2>/dev/null
+    echo
+    echo "Total size:"
+    du -sh "$OUT_DIR" 2>/dev/null
+}
 
-echo
-echo "════════════════════════════════════════════════════"
-echo "ALL DONE!"
-echo "Files created in: $OUT_DIR"
-ls -lh "$OUT_DIR/${BASE_NAME}"*{index,chunk}* 2>/dev/null | head -10
-[ "$(ls "$OUT_DIR/${BASE_NAME}_chunk_"*.txt 2>/dev/null | wc -l)" -gt 10 ] && echo "... and more chunk files"
-echo "════════════════════════════════════════════════════"
+# =========================================================
+# Function: Process pcapng directly
+# =========================================================
+process_pcapng() {
+    local USE_FILTER="$1"
+    
+    show_header
+    if [ "$USE_FILTER" = "yes" ]; then
+        echo "=== PROCESS .PCAPNG WITH FILTER ==="
+        IP_FILTER="ip.addr == 5.188.125.0/24"
+        echo "Filter: $IP_FILTER"
+    else
+        echo "=== PROCESS .PCAPNG (ALL PACKETS) ==="
+    fi
+    
+    echo
+    echo -n "Enter path to .pcapng file [/tmp/albion.pcapng]: "
+    read -r PCAP_FILE
+    PCAP_FILE="${PCAP_FILE:-/tmp/albion.pcapng}"
+    PCAP_FILE="${PCAP_FILE/#\~/$HOME}"
+    
+    if [ ! -f "$PCAP_FILE" ]; then
+        echo "Error: File not found → $PCAP_FILE"
+        return 1
+    fi
+    
+    mkdir -p "$OUT_DIR"
+    BASE_NAME=$(basename "$PCAP_FILE" .pcapng)
+    
+    echo
+    echo "Counting packets (this may take a moment)..."
+    if [ "$USE_FILTER" = "yes" ]; then
+        TOTAL_PACKETS=$(tshark -r "$PCAP_FILE" -Y "$IP_FILTER" 2>/dev/null | wc -l)
+    else
+        TOTAL_PACKETS=$(tshark -r "$PCAP_FILE" 2>/dev/null | wc -l)
+    fi
+    
+    EXPECTED_CHUNKS=$((TOTAL_PACKETS / CHUNK_SIZE + 1))
+    
+    echo "Total packets: $TOTAL_PACKETS"
+    echo "Expected chunks: $EXPECTED_CHUNKS files"
+    echo "Output directory: $OUT_DIR"
+    echo
+    read -p "Continue? [Y/n] " CONFIRM
+    [[ "$CONFIRM" =~ ^[Nn] ]] && return 0
+    
+    # Generate index
+    echo
+    echo "Generating packet index..."
+    if [ "$USE_FILTER" = "yes" ]; then
+        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+    else
+        tshark -r "$PCAP_FILE" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+    fi
+    echo "→ ${BASE_NAME}_index.txt created"
+    
+    # Split into chunks
+    echo
+    echo "Splitting into chunks of $CHUNK_SIZE packets..."
+    rm -f "$OUT_DIR/${BASE_NAME}_chunk_"*.txt
+    
+    if [ "$USE_FILTER" = "yes" ]; then
+        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" -V 2>/dev/null
+    else
+        tshark -r "$PCAP_FILE" -V 2>/dev/null
+    fi | awk -v max="$CHUNK_SIZE" -v dir="$OUT_DIR" -v base="$BASE_NAME" '
+    BEGIN {
+        pkt = 0
+        chunk = 1
+        outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
+        printf "   → %s_chunk_%03d.txt ", base, chunk
+    }
+    
+    /^Frame [0-9]+:/ {
+        pkt++
+        
+        if (pkt > max) {
+            close(outfile)
+            printf "(500 packets)\n"
+            pkt = 1
+            chunk++
+            outfile = sprintf("%s/%s_chunk_%03d.txt", dir, base, chunk)
+            printf "   → %s_chunk_%03d.txt ", base, chunk
+        }
+    }
+    
+    {
+        print $0 >> outfile
+    }
+    
+    END {
+        close(outfile)
+        printf "(%d packets)\n", pkt
+        printf "\n✓ Done! %d chunk(s) created.\n", chunk
+    }
+    '
+    
+    echo
+    echo "════════════════════════════════════════════════════════════"
+    echo "FILES CREATED:"
+    echo "════════════════════════════════════════════════════════════"
+    ls -lh "$OUT_DIR/${BASE_NAME}"*.txt 2>/dev/null | head -15
+    CHUNK_COUNT=$(ls "$OUT_DIR/${BASE_NAME}_chunk_"*.txt 2>/dev/null | wc -l)
+    [ "$CHUNK_COUNT" -gt 15 ] && echo "... and $((CHUNK_COUNT - 15)) more chunk files"
+    echo
+    du -sh "$OUT_DIR" 2>/dev/null
+}
+
+# =========================================================
+# Main Menu
+# =========================================================
+main_menu() {
+    while true; do
+        show_header
+        echo "What do you want to do?"
+        echo
+        echo "   1) Split an existing .txt dump file"
+        echo "      (Use if you already have a tshark -V output file)"
+        echo
+        echo "   2) Process .pcapng WITH IP filter (Albion servers only)"
+        echo
+        echo "   3) Process .pcapng WITHOUT filter (all packets)"
+        echo
+        echo "   4) Exit"
+        echo
+        read -p "Choose [1-4]: " CHOICE
+        
+        case "$CHOICE" in
+            1) split_txt_file ;;
+            2) process_pcapng "yes" ;;
+            3) process_pcapng "no" ;;
+            4) echo "Bye!"; exit 0 ;;
+            *) echo "Invalid option" ;;
+        esac
+        
+        echo
+        read -p "Press ENTER to continue..."
+    done
+}
+
+main_menu
