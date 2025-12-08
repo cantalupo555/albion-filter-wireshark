@@ -212,6 +212,70 @@ process_pcapng() {
 }
 
 # =========================================================
+# Function: Generate index only
+# =========================================================
+generate_index_only() {
+    show_header
+    echo "=== GENERATE PACKET INDEX ONLY ==="
+    echo
+    echo "This creates a summary file with one line per packet."
+    echo
+    echo "Do you want to apply the Albion IP filter?"
+    echo "   1) Yes - Only Albion servers (5.188.125.0/24)"
+    echo "   2) No  - All packets"
+    echo
+    read -p "Choose [1-2]: " FILTER_CHOICE
+    
+    if [ "$FILTER_CHOICE" = "1" ]; then
+        IP_FILTER="ip.addr == 5.188.125.0/24"
+        echo "Filter: $IP_FILTER"
+    else
+        IP_FILTER=""
+        echo "No filter applied"
+    fi
+    
+    echo
+    echo -n "Enter path to .pcapng file [/tmp/albion.pcapng]: "
+    read -r PCAP_FILE
+    PCAP_FILE="${PCAP_FILE:-/tmp/albion.pcapng}"
+    PCAP_FILE="${PCAP_FILE/#\~/$HOME}"
+    
+    if [ ! -f "$PCAP_FILE" ]; then
+        echo "Error: File not found → $PCAP_FILE"
+        return 1
+    fi
+    
+    mkdir -p "$OUT_DIR"
+    BASE_NAME=$(basename "$PCAP_FILE" .pcapng)
+    
+    echo
+    echo "Generating packet index..."
+    
+    if [ -n "$IP_FILTER" ]; then
+        tshark -r "$PCAP_FILE" -Y "$IP_FILTER" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+    else
+        tshark -r "$PCAP_FILE" > "$OUT_DIR/${BASE_NAME}_index.txt" 2>/dev/null
+    fi
+    
+    TOTAL_LINES=$(wc -l < "$OUT_DIR/${BASE_NAME}_index.txt")
+    FILE_SIZE=$(du -h "$OUT_DIR/${BASE_NAME}_index.txt" | cut -f1)
+    
+    echo
+    echo "════════════════════════════════════════════════════════════"
+    echo "INDEX CREATED:"
+    echo "════════════════════════════════════════════════════════════"
+    echo "File: ${BASE_NAME}_index.txt"
+    echo "Size: $FILE_SIZE"
+    echo "Packets: $TOTAL_LINES"
+    echo "Location: $OUT_DIR"
+    echo
+    echo "Preview (first 10 lines):"
+    echo "────────────────────────────────────────────────────────────"
+    head -10 "$OUT_DIR/${BASE_NAME}_index.txt"
+    echo "────────────────────────────────────────────────────────────"
+}
+
+# =========================================================
 # Main Menu
 # =========================================================
 main_menu() {
@@ -226,15 +290,18 @@ main_menu() {
         echo
         echo "   3) Process .pcapng WITHOUT filter (all packets)"
         echo
-        echo "   4) Exit"
+        echo "   4) Generate packet index only (summary, one line per packet)"
         echo
-        read -p "Choose [1-4]: " CHOICE
+        echo "   5) Exit"
+        echo
+        read -p "Choose [1-5]: " CHOICE
         
         case "$CHOICE" in
             1) split_txt_file ;;
             2) process_pcapng "yes" ;;
             3) process_pcapng "no" ;;
-            4) echo "Bye!"; exit 0 ;;
+            4) generate_index_only ;;
+            5) echo "Bye!"; exit 0 ;;
             *) echo "Invalid option" ;;
         esac
         
