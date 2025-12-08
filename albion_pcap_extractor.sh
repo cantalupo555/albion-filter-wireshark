@@ -1,6 +1,6 @@
 #!/bin/bash
 # =========================================================
-# Albion Online PCAP Extractor v3
+# Albion Online PCAP Extractor v4
 # Splits tshark verbose output into manageable chunks
 # =========================================================
 
@@ -276,6 +276,123 @@ generate_index_only() {
 }
 
 # =========================================================
+# Function: Analyze traffic
+# =========================================================
+analyze_traffic() {
+    show_header
+    echo "=== TRAFFIC ANALYSIS ==="
+    echo
+    echo "Analyze from:"
+    echo "   1) Existing index file (.txt)"
+    echo "   2) PCAPNG file (will generate temporary index)"
+    echo
+    read -p "Choose [1-2]: " SOURCE_CHOICE
+    
+    if [ "$SOURCE_CHOICE" = "1" ]; then
+        echo
+        echo -n "Enter path to index .txt file: "
+        read -r INDEX_FILE
+        INDEX_FILE="${INDEX_FILE/#\~/$HOME}"
+        
+        if [ ! -f "$INDEX_FILE" ]; then
+            echo "Error: File not found → $INDEX_FILE"
+            return 1
+        fi
+        
+        TEMP_INDEX="$INDEX_FILE"
+        CLEANUP_TEMP=false
+    else
+        echo
+        echo -n "Enter path to .pcapng file [/tmp/albion.pcapng]: "
+        read -r PCAP_FILE
+        PCAP_FILE="${PCAP_FILE:-/tmp/albion.pcapng}"
+        PCAP_FILE="${PCAP_FILE/#\~/$HOME}"
+        
+        if [ ! -f "$PCAP_FILE" ]; then
+            echo "Error: File not found → $PCAP_FILE"
+            return 1
+        fi
+        
+        echo
+        echo "Generating temporary index..."
+        TEMP_INDEX="/tmp/albion_temp_index_$$.txt"
+        tshark -r "$PCAP_FILE" > "$TEMP_INDEX" 2>/dev/null
+        CLEANUP_TEMP=true
+    fi
+    
+    # Count total packets
+    TOTAL_PACKETS=$(wc -l < "$TEMP_INDEX")
+    
+    # Count Albion packets
+    ALBION_PACKETS=$(grep -c "5\.188\.125\." "$TEMP_INDEX" 2>/dev/null || echo "0")
+    
+    # Count other packets
+    OTHER_PACKETS=$((TOTAL_PACKETS - ALBION_PACKETS))
+    
+    # Calculate percentage
+    if [ "$TOTAL_PACKETS" -gt 0 ]; then
+        ALBION_PCT=$(awk "BEGIN {printf \"%.1f\", ($ALBION_PACKETS/$TOTAL_PACKETS)*100}")
+        OTHER_PCT=$(awk "BEGIN {printf \"%.1f\", ($OTHER_PACKETS/$TOTAL_PACKETS)*100}")
+    else
+        ALBION_PCT="0.0"
+        OTHER_PCT="0.0"
+    fi
+    
+    # Display results
+    echo
+    echo "════════════════════════════════════════════════════════════"
+    echo "                    TRAFFIC ANALYSIS"
+    echo "════════════════════════════════════════════════════════════"
+    echo
+    echo "Albion Servers Found:"
+    echo "┌──────────────────┬────────┬──────────┐"
+    echo "│ IP               │ Port   │ Packets  │"
+    echo "├──────────────────┼────────┼──────────┤"
+    
+    # Parse and count IP:Port combinations for Albion traffic
+    grep "5\.188\.125\." "$TEMP_INDEX" | \
+    awk '{
+        for (i=1; i<=NF; i++) {
+            if ($i ~ /^5\.188\.125\.[0-9]+$/) {
+                ip = $i
+                for (j=1; j<=NF; j++) {
+                    if ($j == "4535" || $j == "5055" || $j == "5056") {
+                        port = $j
+                        break
+                    }
+                }
+                key = ip "|" port
+                count[key]++
+                ips[key] = ip
+                ports[key] = port
+                break
+            }
+        }
+    }
+    END {
+        for (key in count) {
+            print count[key], ips[key], ports[key]
+        }
+    }' | sort -rn | while read cnt ip port; do
+        printf "│ %-16s │ %-6s │ %8d │\n" "$ip" "$port" "$cnt"
+    done
+    
+    echo "└──────────────────┴────────┴──────────┘"
+    echo
+    echo "Summary:"
+    echo "  Total packets:    $TOTAL_PACKETS"
+    echo "  Albion traffic:   $ALBION_PACKETS ($ALBION_PCT%)"
+    echo "  Other traffic:    $OTHER_PACKETS ($OTHER_PCT%)"
+    echo
+    echo "════════════════════════════════════════════════════════════"
+    
+    # Cleanup temp file if needed
+    if [ "$CLEANUP_TEMP" = true ]; then
+        rm -f "$TEMP_INDEX"
+    fi
+}
+
+# =========================================================
 # Main Menu
 # =========================================================
 main_menu() {
@@ -295,16 +412,20 @@ main_menu() {
         echo "   4) Generate packet index only (summary, one line per packet)"
         echo "      → Generates: index only"
         echo
-        echo "   5) Exit"
+        echo "   5) Analyze traffic (show servers, ports, packet count)"
+        echo "      → Generates: terminal output only (no files)"
         echo
-        read -p "Choose [1-5]: " CHOICE
+        echo "   6) Exit"
+        echo
+        read -p "Choose [1-6]: " CHOICE
         
         case "$CHOICE" in
             1) split_txt_file ;;
             2) process_pcapng "yes" ;;
             3) process_pcapng "no" ;;
             4) generate_index_only ;;
-            5) echo "Bye!"; exit 0 ;;
+            5) analyze_traffic ;;
+            6) echo "Bye!"; exit 0 ;;
             *) echo "Invalid option" ;;
         esac
         
